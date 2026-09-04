@@ -1,0 +1,24 @@
+# Core Web API
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+pydantic-settings>=2.6.0
+python-multipart>=0.0.18
+aiofiles>=24.1.0
+httpx>=0.28.0
+
+# Speech-to-Text (STT)
+faster-whisper>=1.1.0
+
+# Text-to-Speech (TTS)
+f5-tts>=0.2.1
+edge-tts>=6.1.19
+soundfile>=0.13.0
+librosa>=0.10.2
+numpy>=1.26.0,<2.0.0
+torch
+torchaudio
+
+# Utilities
+huggingface-hub>=0.27.0
+pydub>=0.25.1

@@ -1,0 +1,24 @@
+services:
+  voice-compute:
+    build: .
+    container_name: voice-compute
+    restart: unless-stopped
+    ports:
+      - "8880:8880"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8880
+      - USE_CUDA=1
+      - WHISPER_MODEL_NAME=large-v3
+      - DEFAULT_VOICE=id-ID-ArdiNeural
+    volumes:
+      - ./models:/app/models
+      - ./voices:/app/voices
+      - ./temp:/app/temp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -1,0 +1,2 @@
+# Model storage directory
+Downloaded weights (F5-TTS, Faster-Whisper, etc.) are kept here and ignored by git.

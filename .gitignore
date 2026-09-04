@@ -1,0 +1,39 @@
+# Virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Model weights & Large binaries
+models/*
+!models/.gitkeep
+temp/*
+!temp/.gitkeep
+voices/*.wav
+voices/*.mp3
+voices/*.ogg
+voices/*.txt
+!voices/.gitkeep
+!voices/README.md
+
+# Logs
+*.log
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.mypy_cache/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+Thumbs.db
