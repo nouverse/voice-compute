@@ -13,7 +13,6 @@ if sys.platform == "win32":
             pass
         os.environ["PATH"] = str(torch_lib) + os.pathsep + os.environ.get("PATH", "")
 
-# apps/voice-server/core -> parents[3] is project root
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 class Settings(BaseSettings):
@@ -25,7 +24,11 @@ class Settings(BaseSettings):
     PROJECT_ROOT: Path = PROJECT_ROOT
     MODELS_DIR: Path = PROJECT_ROOT / "models"
     VOICES_DIR: Path = PROJECT_ROOT / "voices"
+    DATA_DIR: Path = PROJECT_ROOT / "data"
     TEMP_DIR: Path = PROJECT_ROOT / "temp"
+
+    # SQLite Database
+    DB_PATH: Path = DATA_DIR / "voice_compute.db"
 
     # Compute Device
     DEVICE: str = "cuda" if os.environ.get("USE_CUDA", "1") == "1" else "cpu"
@@ -49,4 +52,5 @@ settings = Settings()
 
 settings.MODELS_DIR.mkdir(parents=True, exist_ok=True)
 settings.VOICES_DIR.mkdir(parents=True, exist_ok=True)
+settings.DATA_DIR.mkdir(parents=True, exist_ok=True)
 settings.TEMP_DIR.mkdir(parents=True, exist_ok=True)

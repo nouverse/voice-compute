@@ -1,17 +1,18 @@
 import logging
 import uuid
 from pathlib import Path
-from typing import List, Optional
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
+from typing import Optional
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel
 
 from core.config import settings
+from core.database import get_profile
 from engines.stt_whisper import WhisperSTTEngine
 from engines.tts_qwen import QwenTTSEngine
 
 logger = logging.getLogger("voice-compute.router")
-router = APIRouter(prefix="/v1", tags=["Audio"])
+router = APIRouter(prefix="/v1/audio", tags=["Audio"])
 
 stt_engine = WhisperSTTEngine()
 tts_engine = QwenTTSEngine()
@@ -23,7 +24,7 @@ class SpeechRequest(BaseModel):
     language: Optional[str] = "English"
     response_format: str = "wav"
 
-@router.post("/audio/transcriptions")
+@router.post("/transcriptions")
 async def create_transcription(
     file: UploadFile = File(...),
     model: str = Form("whisper-large-v3"),
@@ -31,12 +32,13 @@ async def create_transcription(
     response_format: str = Form("json"),
     word_timestamps: Optional[bool] = Form(True)
 ):
+    """Whisper STT: Transcribe speech in its original language."""
     file_id = str(uuid.uuid4())
     temp_input = settings.TEMP_DIR / f"{file_id}_{file.filename}"
 
     try:
         content = await file.read()
-        if len(content) < 500:  # empty or header-only chunk
+        if len(content) < 500:
             return JSONResponse(content={"text": "", "segments": [], "words": []})
 
         with open(temp_input, "wb") as f:
@@ -70,13 +72,14 @@ async def create_transcription(
             except Exception:
                 pass
 
-@router.post("/audio/translations")
+@router.post("/translations")
 async def create_translation(
     file: UploadFile = File(...),
     model: str = Form("whisper-large-v3"),
     response_format: str = Form("json"),
     word_timestamps: Optional[bool] = Form(True)
 ):
+    """Whisper STT: Translate spoken audio directly into English text."""
     file_id = str(uuid.uuid4())
     temp_input = settings.TEMP_DIR / f"{file_id}_{file.filename}"
 
@@ -116,8 +119,9 @@ async def create_translation(
             except Exception:
                 pass
 
-@router.post("/audio/speech")
+@router.post("/speech")
 async def create_speech(request: SpeechRequest):
+    """Qwen3-TTS: Generate zero-shot speech synthesis from a chosen voice profile."""
     file_id = str(uuid.uuid4())
     ext = request.response_format.lower()
     if ext not in ["wav", "mp3", "ogg"]:
@@ -126,11 +130,22 @@ async def create_speech(request: SpeechRequest):
     output_path = settings.TEMP_DIR / f"speech_{file_id}.{ext}"
 
     try:
+        # Check if voice profile exists in SQLite
+        voice_id = request.voice or "gading"
+        profile = get_profile(voice_id)
+        ref_audio = None
+        ref_text = None
+        if profile:
+            ref_audio = settings.VOICES_DIR / profile["filename"]
+            ref_text = profile.get("transcript") or None
+
         tts_engine.synthesize(
             text=request.input,
             output_path=output_path,
-            voice=request.voice or "gading",
-            language=request.language or "English"
+            voice=voice_id,
+            language=request.language or "English",
+            ref_audio=ref_audio,
+            ref_text=ref_text
         )
 
         if not output_path.exists():
@@ -147,7 +162,7 @@ async def create_speech(request: SpeechRequest):
         logger.error(f"Error in speech: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/audio/speech/direct")
+@router.post("/speech/direct")
 async def create_direct_speech(
     input: str = Form(...),
     language: str = Form("English"),
@@ -155,6 +170,7 @@ async def create_direct_speech(
     ref_audio: Optional[UploadFile] = File(None),
     ref_text: Optional[str] = Form(None)
 ):
+    """Instant TTS generation from an uploaded/recorded audio clip without permanent profile saving."""
     file_id = str(uuid.uuid4())
     temp_ref = None
     output_path = settings.TEMP_DIR / f"speech_direct_{file_id}.wav"
@@ -185,7 +201,7 @@ async def create_direct_speech(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in speech direct: {e}", exc_info=True)
+        logger.error(f"Error in direct speech: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if temp_ref and temp_ref.exists():
@@ -194,108 +210,12 @@ async def create_direct_speech(
             except Exception:
                 pass
 
-@router.post("/audio/pipeline/translate-voice")
-async def translate_voice_pipeline(
-    file: UploadFile = File(...),
-    voice: str = Form("gading"),
-    target_language: str = Form("English"),
-    ref_audio: Optional[UploadFile] = File(None)
-):
-    file_id = str(uuid.uuid4())
-    temp_input = settings.TEMP_DIR / f"pipeline_in_{file_id}_{file.filename}"
-    temp_custom_ref = None
-    output_audio = settings.TEMP_DIR / f"pipeline_out_{file_id}.wav"
-
-    try:
-        content = await file.read()
-        if len(content) < 500:
-            return JSONResponse(content={
-                "status": "no_speech",
-                "translated_text": "",
-                "audio_url": None
-            })
-
-        with open(temp_input, "wb") as f:
-            f.write(content)
-
-        if ref_audio is not None:
-            temp_custom_ref = settings.TEMP_DIR / f"custom_ref_{file_id}_{ref_audio.filename}"
-            with open(temp_custom_ref, "wb") as f:
-                f.write(await ref_audio.read())
-
-        # Step 1: Speech-to-English translation
-        trans_result = stt_engine.transcribe(
-            audio_path=temp_input,
-            task="translate",
-            word_timestamps=True
-        )
-
-        english_text = trans_result.get("text", "").strip()
-        if not english_text:
-            return JSONResponse(content={
-                "status": "no_speech",
-                "source_language": trans_result.get("language", "unknown"),
-                "translated_text": "",
-                "audio_url": None
-            })
-
-        # Step 2: Voice Clone Synthesis
-        tts_engine.synthesize(
-            text=english_text,
-            output_path=output_audio,
-            voice=voice,
-            language=target_language,
-            ref_audio=temp_custom_ref
-        )
-
-        return JSONResponse(content={
-            "status": "success",
-            "source_language": trans_result.get("language", "unknown"),
-            "source_language_probability": trans_result.get("language_probability", 0),
-            "translated_text": english_text,
-            "voice": voice,
-            "target_language": target_language,
-            "audio_file": f"/temp/{output_audio.name}",
-            "audio_url": f"/v1/audio/download/{output_audio.name}"
-        })
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in translate voice pipeline: {e}", exc_info=True)
-        return JSONResponse(content={"status": "error", "detail": str(e), "translated_text": "", "audio_url": None})
-    finally:
-        if temp_input.exists():
-            try:
-                temp_input.unlink()
-            except Exception:
-                pass
-        if temp_custom_ref and temp_custom_ref.exists():
-            try:
-                temp_custom_ref.unlink()
-            except Exception:
-                pass
-
-@router.get("/audio/download/{filename}")
+@router.get("/download/{filename}")
 async def download_audio(filename: str):
     target = settings.TEMP_DIR / filename
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(path=target, media_type="audio/wav", filename=filename)
-
-@router.get("/audio/voices")
-async def list_available_voices():
-    voices = []
-    for p in sorted(settings.VOICES_DIR.glob("*.wav")):
-        txt_file = p.with_suffix(".txt")
-        transcript = txt_file.read_text(encoding="utf-8").strip() if txt_file.exists() else None
-        voices.append({
-            "id": p.stem,
-            "name": p.stem.replace("_", " ").title(),
-            "engine": "qwen3-tts",
-            "has_transcript": transcript is not None,
-            "transcript_snippet": transcript[:60] if transcript else None
-        })
-    return {"voices": voices}
 
 @router.post("/models/unload")
 async def unload_models():
