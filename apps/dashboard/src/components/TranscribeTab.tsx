@@ -18,8 +18,9 @@ export const TranscribeTab: React.FC = () => {
   const [liveTranscript, setLiveTranscript] = useState<string[]>([]);
   const [isChunkProcessing, setIsChunkProcessing] = useState(false);
 
-  const liveRecorderRef = useRef<MediaRecorder | null>(null);
+  const isListeningRef = useRef(false);
   const liveStreamRef = useRef<MediaStream | null>(null);
+  const activeRecorderRef = useRef<MediaRecorder | null>(null);
 
   // Batch Transcription Handler
   const handleBatchTranscribe = async () => {
@@ -54,34 +55,60 @@ export const TranscribeTab: React.FC = () => {
     }
   };
 
-  // Realtime Streaming Mic Handler
+  // Realtime Robust Discrete Chunk Loop
   const startLiveListening = async () => {
     try {
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       liveStreamRef.current = stream;
-
-      // Slice recording every 2.5 seconds
-      const recorder = new MediaRecorder(stream);
-      liveRecorderRef.current = recorder;
-
-      recorder.ondataavailable = async (e) => {
-        if (e.data.size > 2000) {
-          await processAudioChunk(e.data);
-        }
-      };
-
-      recorder.start(2500); // 2500ms chunk intervals
+      isListeningRef.current = true;
       setIsListening(true);
+      recordCycle();
     } catch {
       setError('Microphone access denied or unavailable.');
     }
   };
 
+  const recordCycle = () => {
+    if (!isListeningRef.current || !liveStreamRef.current) return;
+
+    try {
+      const recorder = new MediaRecorder(liveStreamRef.current);
+      activeRecorderRef.current = recorder;
+      const chunks: Blob[] = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        if (chunks.length > 0) {
+          const completeBlob = new Blob(chunks, { type: 'audio/webm' });
+          if (completeBlob.size > 2000) {
+            await processAudioChunk(completeBlob);
+          }
+        }
+        if (isListeningRef.current) {
+          setTimeout(recordCycle, 150);
+        }
+      };
+
+      recorder.start();
+      setTimeout(() => {
+        if (recorder.state === 'recording') {
+          recorder.stop();
+        }
+      }, 2500);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const stopLiveListening = () => {
-    if (liveRecorderRef.current && isListening) {
-      liveRecorderRef.current.stop();
-      setIsListening(false);
+    isListeningRef.current = false;
+    setIsListening(false);
+    if (activeRecorderRef.current && activeRecorderRef.current.state === 'recording') {
+      activeRecorderRef.current.stop();
     }
     if (liveStreamRef.current) {
       liveStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -92,8 +119,8 @@ export const TranscribeTab: React.FC = () => {
     setIsChunkProcessing(true);
     try {
       const fd = new FormData();
-      fd.append('file', blob, 'chunk.wav');
-      fd.append('response_format', 'text');
+      fd.append('file', blob, 'chunk.webm');
+      fd.append('response_format', 'json');
 
       const endpoint = realtimeTask === 'translate' ? '/v1/audio/translations' : '/v1/audio/transcriptions';
       const res = await fetch(endpoint, {
@@ -102,7 +129,8 @@ export const TranscribeTab: React.FC = () => {
       });
 
       if (res.ok) {
-        const text = (await res.text()).trim();
+        const data = await res.json();
+        const text = (data.text || '').trim();
         if (text && text.length > 1) {
           setLiveTranscript((prev) => [...prev, text]);
         }
@@ -116,6 +144,7 @@ export const TranscribeTab: React.FC = () => {
 
   useEffect(() => {
     return () => {
+      isListeningRef.current = false;
       if (liveStreamRef.current) {
         liveStreamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -132,7 +161,6 @@ export const TranscribeTab: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Sub-navigation tabs */}
       <div className="flex border-b border-base-300 gap-2 bg-base-200/40 p-1.5 rounded-xl">
         <button
           onClick={() => setSubTab('batch')}
@@ -148,7 +176,6 @@ export const TranscribeTab: React.FC = () => {
         </button>
       </div>
 
-      {/* SubTab 1: Batch File Transcribe */}
       {subTab === 'batch' && (
         <div className="card bg-base-200 border border-base-300 shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
@@ -263,7 +290,6 @@ export const TranscribeTab: React.FC = () => {
         </div>
       )}
 
-      {/* SubTab 2: Realtime Live Mode */}
       {subTab === 'realtime' && (
         <div className="card bg-base-200 border border-base-300 shadow-xl p-6">
           <div className="flex items-center justify-between mb-4">
@@ -272,7 +298,7 @@ export const TranscribeTab: React.FC = () => {
                 <Waves className="text-accent w-5 h-5" /> Realtime Live Speech Recognition
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Mic mendengarkan suara secara terus menerus dan Faster-Whisper mentranskripsikannya secara berkala (~2.5s chunk).
+                Mic mendengarkan ucapan secara kontinyu dan Faster-Whisper mentranskripsi tiap penggalan audio.
               </p>
             </div>
 
@@ -290,7 +316,6 @@ export const TranscribeTab: React.FC = () => {
             </div>
           </div>
 
-          {/* Live Mic Control Card */}
           <div className="p-8 rounded-2xl bg-base-300/40 border border-base-300 mb-6 flex flex-col items-center justify-center">
             <div className="mb-4">
               {isListening ? (
@@ -326,7 +351,6 @@ export const TranscribeTab: React.FC = () => {
             )}
           </div>
 
-          {/* Live Text Area */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">

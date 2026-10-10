@@ -8,7 +8,6 @@ interface Props {
 
 interface TranslationHistoryItem {
   id: string;
-  source_text?: string;
   source_lang?: string;
   translated_text: string;
   audio_url: string;
@@ -31,11 +30,12 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
   const [isLiveStreaming, setIsLiveStreaming] = useState(false);
   const [isProcessingLive, setIsProcessingLive] = useState(false);
   const [history, setHistory] = useState<TranslationHistoryItem[]>([]);
-  const liveRecorderRef = useRef<MediaRecorder | null>(null);
-  const liveStreamRef = useRef<MediaStream | null>(null);
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const isLiveStreamingRef = useRef(false);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const activeRecorderRef = useRef<MediaRecorder | null>(null);
+  const pttRecorderRef = useRef<MediaRecorder | null>(null);
+  const pttChunksRef = useRef<Blob[]>([]);
 
   // Batch PTT Handlers
   const startRecording = async () => {
@@ -43,22 +43,22 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
       setError(null);
       setResult(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+      const mr = new MediaRecorder(stream);
+      pttRecorderRef.current = mr;
+      pttChunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      mr.ondataavailable = (event) => {
+        if (event.data.size > 0) pttChunksRef.current.push(event.data);
       };
 
-      mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+      mr.onstop = () => {
+        const audioBlob = new Blob(pttChunksRef.current, { type: 'audio/webm' });
         setRecordedBlob(audioBlob);
         setRecordedUrl(URL.createObjectURL(audioBlob));
         stream.getTracks().forEach((track) => track.stop());
       };
 
-      mediaRecorder.start();
+      mr.start();
       setRecording(true);
     } catch {
       setError('Microphone access denied or not available.');
@@ -66,8 +66,8 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && recording) {
-      mediaRecorderRef.current.stop();
+    if (pttRecorderRef.current && recording) {
+      pttRecorderRef.current.stop();
       setRecording(false);
     }
   };
@@ -89,7 +89,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
 
     try {
       const formData = new FormData();
-      formData.append('file', recordedBlob, 'input.wav');
+      formData.append('file', recordedBlob, 'input.webm');
       formData.append('voice', selectedVoice);
       formData.append('target_language', 'English');
 
@@ -104,7 +104,11 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
       }
 
       const data = await res.json();
-      setResult(data);
+      if (data.status === 'no_speech') {
+        setError('Tidak ada suara terdeteksi. Silakan coba bicara lebih jelas.');
+      } else {
+        setResult(data);
+      }
     } catch (err: any) {
       setError(err.message || 'Error occurred');
     } finally {
@@ -112,33 +116,60 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
     }
   };
 
-  // Continuous Realtime Stream Handlers
+  // Continuous Realtime Stream Handlers (Discrete Cycle Loop)
   const startContinuousTranslation = async () => {
     try {
       setError(null);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       liveStreamRef.current = stream;
-
-      const mr = new MediaRecorder(stream);
-      liveRecorderRef.current = mr;
-
-      mr.ondataavailable = async (e) => {
-        if (e.data.size > 3000) {
-          await processLiveTranslationChunk(e.data);
-        }
-      };
-
-      mr.start(3500); // 3.5s conversational slice
+      isLiveStreamingRef.current = true;
       setIsLiveStreaming(true);
+      liveTranslationCycle();
     } catch {
       setError('Microphone access denied or unavailable.');
     }
   };
 
+  const liveTranslationCycle = () => {
+    if (!isLiveStreamingRef.current || !liveStreamRef.current) return;
+
+    try {
+      const mr = new MediaRecorder(liveStreamRef.current);
+      activeRecorderRef.current = mr;
+      const chunks: Blob[] = [];
+
+      mr.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      mr.onstop = async () => {
+        if (chunks.length > 0) {
+          const completeBlob = new Blob(chunks, { type: 'audio/webm' });
+          if (completeBlob.size > 3000) {
+            await processLiveTranslationChunk(completeBlob);
+          }
+        }
+        if (isLiveStreamingRef.current) {
+          setTimeout(liveTranslationCycle, 200);
+        }
+      };
+
+      mr.start();
+      setTimeout(() => {
+        if (mr.state === 'recording') {
+          mr.stop();
+        }
+      }, 3500); // 3.5s per chunk
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const stopContinuousTranslation = () => {
-    if (liveRecorderRef.current && isLiveStreaming) {
-      liveRecorderRef.current.stop();
-      setIsLiveStreaming(false);
+    isLiveStreamingRef.current = false;
+    setIsLiveStreaming(false);
+    if (activeRecorderRef.current && activeRecorderRef.current.state === 'recording') {
+      activeRecorderRef.current.stop();
     }
     if (liveStreamRef.current) {
       liveStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -149,7 +180,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
     setIsProcessingLive(true);
     try {
       const fd = new FormData();
-      fd.append('file', blob, 'live_chunk.wav');
+      fd.append('file', blob, 'live_chunk.webm');
       fd.append('voice', selectedVoice);
       fd.append('target_language', 'English');
 
@@ -160,7 +191,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
 
       if (res.ok) {
         const data = await res.json();
-        if (data.translated_text && data.translated_text.trim()) {
+        if (data.status === 'success' && data.translated_text && data.audio_url) {
           const item: TranslationHistoryItem = {
             id: String(Date.now()),
             source_lang: data.source_language,
@@ -170,7 +201,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
           };
           setHistory((prev) => [item, ...prev]);
 
-          // Auto-play the synthesized speech
+          // Auto-play synthesized voice
           const audio = new Audio(data.audio_url);
           audio.play().catch(() => {});
         }
@@ -184,6 +215,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
 
   useEffect(() => {
     return () => {
+      isLiveStreamingRef.current = false;
       if (liveStreamRef.current) {
         liveStreamRef.current.getTracks().forEach((t) => t.stop());
       }
@@ -192,7 +224,6 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
 
   return (
     <div className="space-y-6">
-      {/* Sub-navigation tabs */}
       <div className="flex border-b border-base-300 gap-2 bg-base-200/40 p-1.5 rounded-xl">
         <button
           onClick={() => setSubTab('batch')}
@@ -208,7 +239,6 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
         </button>
       </div>
 
-      {/* SubTab 1: Push-to-Talk Mode */}
       {subTab === 'batch' && (
         <div className="card bg-base-200 border border-base-300 shadow-xl p-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -217,7 +247,7 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
                 <Languages className="text-accent w-5 h-5" /> Push-to-Talk Voice Translator
               </h2>
               <p className="text-xs text-slate-400 mt-1">
-                Rekam kalimat bahasa Indonesia santai → Whisper terjemahkan ke English → Qwen3 kloning suara lu.
+                Rekam kalimat bahasa Indo santai → Whisper terjemahkan ke English → Qwen3 kloning suara lu.
               </p>
             </div>
 
@@ -343,7 +373,6 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
         </div>
       )}
 
-      {/* SubTab 2: Continuous Realtime Mode */}
       {subTab === 'realtime' && (
         <div className="card bg-base-200 border border-base-300 shadow-xl p-6">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
@@ -373,7 +402,6 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
             </div>
           </div>
 
-          {/* Live Controller Button */}
           <div className="p-8 rounded-2xl bg-base-300/40 border border-base-300 mb-6 flex flex-col items-center justify-center">
             <div className="mb-4">
               {isLiveStreaming ? (
@@ -409,7 +437,6 @@ export const TranslatorTab: React.FC<Props> = ({ voices }) => {
             )}
           </div>
 
-          {/* Translation Stream History */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold uppercase tracking-wider text-slate-400">

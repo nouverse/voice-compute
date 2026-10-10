@@ -1,3 +1,4 @@
+import logging
 import uuid
 from pathlib import Path
 from typing import List, Optional
@@ -9,6 +10,7 @@ from core.config import settings
 from engines.stt_whisper import WhisperSTTEngine
 from engines.tts_qwen import QwenTTSEngine
 
+logger = logging.getLogger("voice-compute.router")
 router = APIRouter(prefix="/v1", tags=["Audio"])
 
 stt_engine = WhisperSTTEngine()
@@ -33,8 +35,12 @@ async def create_transcription(
     temp_input = settings.TEMP_DIR / f"{file_id}_{file.filename}"
 
     try:
+        content = await file.read()
+        if len(content) < 500:  # empty or header-only chunk
+            return JSONResponse(content={"text": "", "segments": [], "words": []})
+
         with open(temp_input, "wb") as f:
-            f.write(await file.read())
+            f.write(content)
 
         raw_result = stt_engine.transcribe(
             audio_path=temp_input,
@@ -52,8 +58,11 @@ async def create_transcription(
             return PlainTextResponse(_format_vtt(raw_result.get("segments", [])))
 
         return JSONResponse(content=raw_result)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in transcription: {e}", exc_info=True)
+        return JSONResponse(content={"text": "", "error": str(e), "segments": [], "words": []})
     finally:
         if temp_input.exists():
             try:
@@ -72,8 +81,12 @@ async def create_translation(
     temp_input = settings.TEMP_DIR / f"{file_id}_{file.filename}"
 
     try:
+        content = await file.read()
+        if len(content) < 500:
+            return JSONResponse(content={"text": "", "segments": [], "words": []})
+
         with open(temp_input, "wb") as f:
-            f.write(await file.read())
+            f.write(content)
 
         raw_result = stt_engine.transcribe(
             audio_path=temp_input,
@@ -91,8 +104,11 @@ async def create_translation(
             return PlainTextResponse(_format_vtt(raw_result.get("segments", [])))
 
         return JSONResponse(content=raw_result)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in translation: {e}", exc_info=True)
+        return JSONResponse(content={"text": "", "error": str(e), "segments": [], "words": []})
     finally:
         if temp_input.exists():
             try:
@@ -125,7 +141,10 @@ async def create_speech(request: SpeechRequest):
             media_type="audio/wav" if ext == "wav" else "audio/mpeg",
             filename=f"speech_{file_id}.{ext}"
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error in speech: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/audio/speech/direct")
@@ -136,9 +155,6 @@ async def create_direct_speech(
     ref_audio: Optional[UploadFile] = File(None),
     ref_text: Optional[str] = Form(None)
 ):
-    """
-    Synthesize speech using an instant audio reference uploaded directly (e.g. from mic record).
-    """
     file_id = str(uuid.uuid4())
     temp_ref = None
     output_path = settings.TEMP_DIR / f"speech_direct_{file_id}.wav"
@@ -166,7 +182,10 @@ async def create_direct_speech(
             media_type="audio/wav",
             filename=f"speech_direct_{file_id}.wav"
         )
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error(f"Error in speech direct: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if temp_ref and temp_ref.exists():
@@ -182,18 +201,22 @@ async def translate_voice_pipeline(
     target_language: str = Form("English"),
     ref_audio: Optional[UploadFile] = File(None)
 ):
-    """
-    End-to-end voice translation pipeline:
-    Audio Input (any language) -> Faster-Whisper Translate to English -> Qwen3-TTS Cloned Output.
-    """
     file_id = str(uuid.uuid4())
     temp_input = settings.TEMP_DIR / f"pipeline_in_{file_id}_{file.filename}"
     temp_custom_ref = None
     output_audio = settings.TEMP_DIR / f"pipeline_out_{file_id}.wav"
 
     try:
+        content = await file.read()
+        if len(content) < 500:
+            return JSONResponse(content={
+                "status": "no_speech",
+                "translated_text": "",
+                "audio_url": None
+            })
+
         with open(temp_input, "wb") as f:
-            f.write(await file.read())
+            f.write(content)
 
         if ref_audio is not None:
             temp_custom_ref = settings.TEMP_DIR / f"custom_ref_{file_id}_{ref_audio.filename}"
@@ -209,7 +232,12 @@ async def translate_voice_pipeline(
 
         english_text = trans_result.get("text", "").strip()
         if not english_text:
-            raise HTTPException(status_code=400, detail="No speech detected in audio file.")
+            return JSONResponse(content={
+                "status": "no_speech",
+                "source_language": trans_result.get("language", "unknown"),
+                "translated_text": "",
+                "audio_url": None
+            })
 
         # Step 2: Voice Clone Synthesis
         tts_engine.synthesize(
@@ -221,6 +249,7 @@ async def translate_voice_pipeline(
         )
 
         return JSONResponse(content={
+            "status": "success",
             "source_language": trans_result.get("language", "unknown"),
             "source_language_probability": trans_result.get("language_probability", 0),
             "translated_text": english_text,
@@ -229,8 +258,11 @@ async def translate_voice_pipeline(
             "audio_file": f"/temp/{output_audio.name}",
             "audio_url": f"/v1/audio/download/{output_audio.name}"
         })
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error in translate voice pipeline: {e}", exc_info=True)
+        return JSONResponse(content={"status": "error", "detail": str(e), "translated_text": "", "audio_url": None})
     finally:
         if temp_input.exists():
             try:

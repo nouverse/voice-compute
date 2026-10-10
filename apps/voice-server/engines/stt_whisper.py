@@ -57,49 +57,63 @@ class WhisperSTTEngine(BaseSTTEngine):
         if self.model is None:
             self._load_model()
 
-        segments, info = self.model.transcribe(
-            str(audio_path),
-            language=language,
-            task=task,
-            word_timestamps=word_timestamps,
-            beam_size=5,
-            vad_filter=True,
-            vad_parameters=dict(min_silence_duration_ms=500)
-        )
+        try:
+            segments, info = self.model.transcribe(
+                str(audio_path),
+                language=language,
+                task=task,
+                word_timestamps=word_timestamps,
+                beam_size=5,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=500)
+            )
 
-        full_text = []
-        words_list = []
-        segments_list = []
+            full_text = []
+            words_list = []
+            segments_list = []
 
-        for seg in segments:
-            full_text.append(seg.text)
-            seg_data = {
-                "id": seg.id,
-                "start": round(seg.start, 3),
-                "end": round(seg.end, 3),
-                "text": seg.text.strip()
+            for seg in segments:
+                text_clean = seg.text.strip()
+                if text_clean:
+                    full_text.append(text_clean)
+                seg_data = {
+                    "id": seg.id,
+                    "start": round(seg.start, 3),
+                    "end": round(seg.end, 3),
+                    "text": text_clean
+                }
+                if word_timestamps and seg.words:
+                    seg_words = []
+                    for w in seg.words:
+                        word_obj = {
+                            "word": w.word,
+                            "start": round(w.start, 3),
+                            "end": round(w.end, 3),
+                            "probability": round(w.probability, 3)
+                        }
+                        seg_words.append(word_obj)
+                        words_list.append(word_obj)
+                    seg_data["words"] = seg_words
+
+                segments_list.append(seg_data)
+
+            return {
+                "text": " ".join(full_text).strip(),
+                "task": task,
+                "language": info.language if info else "unknown",
+                "language_probability": round(info.language_probability, 3) if info else 0.0,
+                "duration": round(info.duration, 3) if info else 0.0,
+                "segments": segments_list,
+                "words": words_list
             }
-            if word_timestamps and seg.words:
-                seg_words = []
-                for w in seg.words:
-                    word_obj = {
-                        "word": w.word,
-                        "start": round(w.start, 3),
-                        "end": round(w.end, 3),
-                        "probability": round(w.probability, 3)
-                    }
-                    seg_words.append(word_obj)
-                    words_list.append(word_obj)
-                seg_data["words"] = seg_words
-
-            segments_list.append(seg_data)
-
-        return {
-            "text": " ".join(full_text).strip(),
-            "task": task,
-            "language": info.language,
-            "language_probability": round(info.language_probability, 3),
-            "duration": round(info.duration, 3),
-            "segments": segments_list,
-            "words": words_list
-        }
+        except Exception as e:
+            logger.warning(f"Audio transcription warning ({e}), returning empty result.")
+            return {
+                "text": "",
+                "task": task,
+                "language": "unknown",
+                "language_probability": 0.0,
+                "duration": 0.0,
+                "segments": [],
+                "words": []
+            }
