@@ -4,28 +4,20 @@ echo ============================================================
 echo   🚀 Starting Nouverse Voice Compute on port 8880
 echo ============================================================
 
-if not exist ".venv" (
-    echo [1/4] Creating Python virtual environment...
-    python -m venv .venv
-    call .venv\Scripts\activate.bat
-    echo [2/4] Installing dependencies...
-    pip install -r requirements.txt
-) else (
+set ROOT=%~dp0
+cd /d %ROOT%
+
+if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
 )
 
 if not exist ".env" (
-    echo [INFO] Copying .env.example to .env...
-    copy .env.example .env
+    if exist ".env.example" (
+        copy .env.example .env
+    )
 )
 
-if not exist "models\F5TTS_Base\model_1200000.safetensors" (
-    echo [3/4] Model weights missing. Downloading pre-trained models...
-    python scripts\download_models.py
-) else (
-    echo [3/4] Model weights verified.
-)
-
-echo [4/4] Launching FastAPI server...
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8880 --reload
+echo [INFO] Launching Voice Server & Dashboard on http://0.0.0.0:8880
+set PYTHONPATH=%ROOT%apps\voice-server
+python -m uvicorn main:app --app-dir apps\voice-server --host 0.0.0.0 --port 8880
 pause

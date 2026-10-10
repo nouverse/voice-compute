@@ -1,44 +1,48 @@
+"""
+Script to download official model weights for Voice Compute:
+1. Faster-Whisper Large-v3
+2. Qwen3-TTS 1.7B Base & Tokenizer 12Hz
+"""
 import os
 import sys
 from pathlib import Path
-from huggingface_hub import hf_hub_download
+from huggingface_hub import snapshot_download
 
-MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODELS_DIR = PROJECT_ROOT / "models"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-def download_f5tts():
+def download_all():
     print("=" * 60)
-    print("📥 [1/2] Downloading F5-TTS Voice Cloning Weights...")
+    print("Nouverse Voice Compute - Model Downloader")
     print("=" * 60)
-    target_dir = MODELS_DIR / "F5TTS_Base"
-    target_dir.mkdir(parents=True, exist_ok=True)
 
-    hf_hub_download(
-        repo_id="SWivid/F5-TTS",
-        filename="F5TTS_Base/model_1200000.safetensors",
-        local_dir=str(MODELS_DIR)
+    # 1. Faster-Whisper Large-v3
+    whisper_dir = MODELS_DIR / "faster-whisper-large-v3"
+    print(f"\n[1/3] Downloading Faster-Whisper Large-v3 into {whisper_dir}...")
+    snapshot_download(
+        repo_id="Systran/faster-whisper-large-v3",
+        local_dir=str(whisper_dir),
+        ignore_patterns=["*.msgpack", "*.h5", "flax_model.msgpack"]
     )
-    hf_hub_download(
-        repo_id="SWivid/F5-TTS",
-        filename="F5TTS_Base/vocab.txt",
-        local_dir=str(MODELS_DIR)
-    )
-    print("✅ [F5-TTS] Model and vocabulary downloaded successfully!")
 
-def download_whisper():
-    print("=" * 60)
-    print("📥 [2/2] Downloading Faster-Whisper Large-v3 Weights...")
-    print("=" * 60)
-    try:
-        from faster_whisper import WhisperModel
-        whisper_dir = MODELS_DIR / "faster-whisper-large-v3"
-        print(f"Downloading to: {whisper_dir}...")
-        WhisperModel("large-v3", download_root=str(MODELS_DIR), compute_type="float16")
-        print("✅ [Faster-Whisper] Large-v3 model weights downloaded successfully!")
-    except Exception as e:
-        print(f"ℹ [Faster-Whisper] Faster-Whisper will auto-download on first STT request ({e}).")
+    # 2. Qwen3-TTS Tokenizer 12Hz
+    tokenizer_dir = MODELS_DIR / "qwen3-tts" / "Qwen3-TTS-Tokenizer-12Hz"
+    print(f"\n[2/3] Downloading Qwen3-TTS Tokenizer into {tokenizer_dir}...")
+    snapshot_download(
+        repo_id="Qwen/Qwen3-TTS-Tokenizer-12Hz",
+        local_dir=str(tokenizer_dir)
+    )
+
+    # 3. Qwen3-TTS 1.7B Base
+    qwen_dir = MODELS_DIR / "qwen3-tts" / "Qwen3-TTS-12Hz-1.7B-Base"
+    print(f"\n[3/3] Downloading Qwen3-TTS 1.7B Base into {qwen_dir}...")
+    snapshot_download(
+        repo_id="Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+        local_dir=str(qwen_dir)
+    )
+
+    print("\n✅ All models downloaded successfully!")
 
 if __name__ == "__main__":
-    download_f5tts()
-    download_whisper()
-    print("\n🎉 [ALL DONE] All model weights are ready in models/ directory!")
+    download_all()

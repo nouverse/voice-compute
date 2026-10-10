@@ -1,8 +1,8 @@
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from app.core.config import settings
-from app.engines.base import BaseSTTEngine
+from core.config import settings
+from engines.base import BaseSTTEngine
 
 logger = logging.getLogger("voice-compute.stt")
 
@@ -20,7 +20,7 @@ class WhisperSTTEngine(BaseSTTEngine):
                 else settings.WHISPER_MODEL_NAME
             )
 
-            logger.info(f"Lazy loading Whisper model from: {model_source} on {settings.DEVICE} ({settings.COMPUTE_TYPE})")
+            logger.info(f"Loading Whisper model from: {model_source} on {settings.DEVICE} ({settings.COMPUTE_TYPE})")
             self.model = WhisperModel(
                 model_source,
                 device=settings.DEVICE,
@@ -31,9 +31,9 @@ class WhisperSTTEngine(BaseSTTEngine):
         except Exception as e:
             logger.error(f"Failed to load Whisper model: {e}")
             self.model = None
+            raise e
 
     def unload(self):
-        """Unload model from RAM/VRAM to free up system resources."""
         if self.model is not None:
             del self.model
             self.model = None
@@ -45,22 +45,22 @@ class WhisperSTTEngine(BaseSTTEngine):
                     torch.cuda.empty_cache()
             except Exception:
                 pass
-            logger.info("Whisper model unloaded from memory.")
+            logger.info("Whisper model unloaded from VRAM.")
 
     def transcribe(
         self,
         audio_path: Path,
         language: Optional[str] = None,
+        task: str = "transcribe",
         word_timestamps: bool = True
     ) -> Dict[str, Any]:
         if self.model is None:
             self._load_model()
-            if self.model is None:
-                raise RuntimeError("Whisper STT model is not loaded.")
 
         segments, info = self.model.transcribe(
             str(audio_path),
             language=language,
+            task=task,
             word_timestamps=word_timestamps,
             beam_size=5,
             vad_filter=True,
@@ -96,6 +96,7 @@ class WhisperSTTEngine(BaseSTTEngine):
 
         return {
             "text": " ".join(full_text).strip(),
+            "task": task,
             "language": info.language,
             "language_probability": round(info.language_probability, 3),
             "duration": round(info.duration, 3),

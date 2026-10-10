@@ -15,6 +15,14 @@ voices/*.ogg
 voices/*.txt
 !voices/.gitkeep
 !voices/README.md
+dataset/
+
+# Frontend / Node
+node_modules/
+dist/
+.turbo/
+apps/dashboard/node_modules/
+apps/dashboard/dist/
 
 # Logs
 *.log

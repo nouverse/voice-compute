@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 class BaseSTTEngine(ABC):
     @abstractmethod
@@ -8,20 +8,28 @@ class BaseSTTEngine(ABC):
         self,
         audio_path: Path,
         language: Optional[str] = None,
+        task: str = "transcribe",
         word_timestamps: bool = True
     ) -> Dict[str, Any]:
-        """Transcribe audio file and return text + timestamps."""
+        pass
+
+    @abstractmethod
+    def unload(self):
         pass
 
 class BaseTTSEngine(ABC):
     @abstractmethod
-    async def synthesize(
+    def synthesize(
         self,
         text: str,
         output_path: Path,
-        voice: Optional[str] = None,
-        reference_audio: Optional[Path] = None,
-        reference_text: Optional[str] = None
+        voice: str = "gading",
+        language: str = "English",
+        ref_audio: Optional[Path] = None,
+        ref_text: Optional[str] = None
     ) -> Path:
-        """Synthesize text to speech and save to output_path."""
+        pass
+
+    @abstractmethod
+    def unload(self):
         pass
