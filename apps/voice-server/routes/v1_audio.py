@@ -38,7 +38,7 @@ async def create_transcription(
 
         raw_result = stt_engine.transcribe(
             audio_path=temp_input,
-            language=language,
+            language=language if language and language != "auto" else None,
             task="transcribe",
             word_timestamps=word_timestamps
         )
@@ -128,11 +128,59 @@ async def create_speech(request: SpeechRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.post("/audio/speech/direct")
+async def create_direct_speech(
+    input: str = Form(...),
+    language: str = Form("English"),
+    voice: Optional[str] = Form("gading"),
+    ref_audio: Optional[UploadFile] = File(None),
+    ref_text: Optional[str] = Form(None)
+):
+    """
+    Synthesize speech using an instant audio reference uploaded directly (e.g. from mic record).
+    """
+    file_id = str(uuid.uuid4())
+    temp_ref = None
+    output_path = settings.TEMP_DIR / f"speech_direct_{file_id}.wav"
+
+    try:
+        if ref_audio is not None:
+            temp_ref = settings.TEMP_DIR / f"ref_{file_id}_{ref_audio.filename}"
+            with open(temp_ref, "wb") as f:
+                f.write(await ref_audio.read())
+
+        tts_engine.synthesize(
+            text=input,
+            output_path=output_path,
+            voice=voice or "gading",
+            language=language,
+            ref_audio=temp_ref,
+            ref_text=ref_text
+        )
+
+        if not output_path.exists():
+            raise HTTPException(status_code=500, detail="Speech generation failed")
+
+        return FileResponse(
+            path=output_path,
+            media_type="audio/wav",
+            filename=f"speech_direct_{file_id}.wav"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if temp_ref and temp_ref.exists():
+            try:
+                temp_ref.unlink()
+            except Exception:
+                pass
+
 @router.post("/audio/pipeline/translate-voice")
 async def translate_voice_pipeline(
     file: UploadFile = File(...),
     voice: str = Form("gading"),
-    target_language: str = Form("English")
+    target_language: str = Form("English"),
+    ref_audio: Optional[UploadFile] = File(None)
 ):
     """
     End-to-end voice translation pipeline:
@@ -140,11 +188,17 @@ async def translate_voice_pipeline(
     """
     file_id = str(uuid.uuid4())
     temp_input = settings.TEMP_DIR / f"pipeline_in_{file_id}_{file.filename}"
+    temp_custom_ref = None
     output_audio = settings.TEMP_DIR / f"pipeline_out_{file_id}.wav"
 
     try:
         with open(temp_input, "wb") as f:
             f.write(await file.read())
+
+        if ref_audio is not None:
+            temp_custom_ref = settings.TEMP_DIR / f"custom_ref_{file_id}_{ref_audio.filename}"
+            with open(temp_custom_ref, "wb") as f:
+                f.write(await ref_audio.read())
 
         # Step 1: Speech-to-English translation
         trans_result = stt_engine.transcribe(
@@ -162,7 +216,8 @@ async def translate_voice_pipeline(
             text=english_text,
             output_path=output_audio,
             voice=voice,
-            language=target_language
+            language=target_language,
+            ref_audio=temp_custom_ref
         )
 
         return JSONResponse(content={
@@ -180,6 +235,11 @@ async def translate_voice_pipeline(
         if temp_input.exists():
             try:
                 temp_input.unlink()
+            except Exception:
+                pass
+        if temp_custom_ref and temp_custom_ref.exists():
+            try:
+                temp_custom_ref.unlink()
             except Exception:
                 pass
 
