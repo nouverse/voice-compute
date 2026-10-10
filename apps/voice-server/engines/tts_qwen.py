@@ -54,7 +54,6 @@ class QwenTTSEngine(BaseTTSEngine):
 
         # Resolve reference audio and text
         if ref_audio is None:
-            # Check in voices directory
             candidate_audio = settings.VOICES_DIR / f"{voice}.wav"
             if not candidate_audio.exists():
                 candidate_audio = settings.VOICES_DIR / f"{voice}_ref_clean.wav"
@@ -62,21 +61,28 @@ class QwenTTSEngine(BaseTTSEngine):
                 candidate_audio = settings.VOICES_DIR / "gading.wav"
             ref_audio = candidate_audio
 
+        x_vector_only = False
         if ref_text is None:
             text_file = ref_audio.with_suffix(".txt")
             if text_file.exists():
                 ref_text = text_file.read_text(encoding="utf-8").strip()
             else:
                 ref_text = None
+                x_vector_only = True
 
-        logger.info(f"Synthesizing speech with voice clone: ref={ref_audio.name}, lang={language}, text_len={len(text)}")
+        logger.info(f"Synthesizing speech: ref={ref_audio.name}, x_vector_only={x_vector_only}, lang={language}, text_len={len(text)}")
 
-        wavs, sr = self.model.generate_voice_clone(
-            text=text,
-            language=language,
-            ref_audio=str(ref_audio),
-            ref_text=ref_text,
-        )
+        kwargs = {
+            "text": text,
+            "language": language,
+            "ref_audio": str(ref_audio),
+        }
+        if x_vector_only:
+            kwargs["x_vector_only_mode"] = True
+        else:
+            kwargs["ref_text"] = ref_text
+
+        wavs, sr = self.model.generate_voice_clone(**kwargs)
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
         sf.write(str(output_path), wavs[0], sr)
